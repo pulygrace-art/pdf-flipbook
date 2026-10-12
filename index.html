@@ -53,6 +53,17 @@
   #drop .icon { font-size: 48px; line-height: 1; margin-bottom: 12px; }
   #drop p { color: var(--muted); margin: 8px 0 20px; }
 
+  #home { display: flex; flex-direction: column; align-items: center; gap: 20px; width: 100%; max-height: 100%; overflow-y: auto; }
+  #shelf { display: none; width: min(560px, 100%); }
+  #shelf h2 { font-size: 16px; margin: 0 0 10px; }
+  #shelfList { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 8px; }
+  #shelfList li { display: flex; align-items: center; gap: 10px; padding: 10px 12px; background: var(--panel); border: 1px solid var(--border); border-radius: 10px; }
+  #shelfList a { flex: 1; color: var(--fg); text-decoration: none; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  #shelfList a:hover { color: var(--accent); }
+  #shelfList button { font-size: 13px; padding: 5px 10px; }
+  /* 分享模式：讀者只看書，不顯示上傳功能 */
+  body.shared #changeBtn { display: none !important; }
+
   /* 進度 */
   #progress { width: min(420px, 100%); text-align: center; display: none; }
   #progress .bar { height: 6px; background: var(--panel); border-radius: 3px; overflow: hidden; margin-top: 12px; }
@@ -95,6 +106,7 @@
 </header>
 
 <main>
+  <div id="home">
   <div id="drop">
     <div class="icon">📄</div>
     <strong>把 PDF 拖曳到這裡</strong>
@@ -102,6 +114,12 @@
     <label class="btn primary">選擇 PDF 檔案
       <input type="file" accept="application/pdf" hidden id="fileInput">
     </label>
+  </div>
+
+  <div id="shelf">
+    <h2>📚 書架</h2>
+    <ul id="shelfList"></ul>
+  </div>
   </div>
 
   <div id="progress">
@@ -147,12 +165,17 @@ async function handleFile(file) {
     alert('請選擇 PDF 檔案');
     return;
   }
+  await loadPdf(file.name, async () => new Uint8Array(await file.arrayBuffer()));
+}
+
+async function loadPdf(name, getData) {
   showView('progress');
   setProgress(0, '正在讀取 PDF…');
-  $('fileName').textContent = file.name;
+  $('fileName').textContent = name;
+  document.title = name.replace(/\.pdf$/i, '') + ' - PDF 翻頁書';
 
   try {
-    const data = new Uint8Array(await file.arrayBuffer());
+    const data = await getData();
     const pdf = await pdfjsLib.getDocument({ data }).promise;
     const pages = await renderPages(pdf);
     buildBook(pages);
@@ -162,6 +185,58 @@ async function handleFile(file) {
     showView('drop');
   }
 }
+
+// ---------- 分享連結：?pdf=books/檔名.pdf ----------
+const sharedPath = new URLSearchParams(location.search).get('pdf');
+// 只允許網站內的相對路徑，避免被拿去載入其他網站的檔案
+const isSafePath = p => p && /\.pdf$/i.test(p) && !/^[a-z]+:|^\/\/|\.\./i.test(p);
+if (sharedPath) {
+  if (isSafePath(sharedPath)) {
+    document.body.classList.add('shared');
+    loadPdf(sharedPath.split('/').pop(), async () => {
+      const res = await fetch(sharedPath);
+      if (!res.ok) throw new Error(`找不到檔案（${res.status}）`);
+      return new Uint8Array(await res.arrayBuffer());
+    });
+  } else {
+    alert('分享連結的檔案路徑不正確');
+  }
+}
+
+// ---------- 書架：自動列出 GitHub repo 裡 books/ 資料夾的 PDF ----------
+async function loadShelf() {
+  const m = location.hostname.match(/^([^.]+)\.github\.io$/);
+  const repo = location.pathname.split('/').filter(Boolean)[0];
+  if (!m || !repo) return;
+  try {
+    const res = await fetch(`https://api.github.com/repos/${m[1]}/${repo}/contents/books`);
+    if (!res.ok) return;
+    const files = (await res.json()).filter(f => f.type === 'file' && /\.pdf$/i.test(f.name));
+    if (!files.length) return;
+    const list = $('shelfList');
+    files.forEach(f => {
+      const link = shareUrl(f.path);
+      const li = document.createElement('li');
+      const a = document.createElement('a');
+      a.href = link;
+      a.textContent = '📕 ' + f.name.replace(/\.pdf$/i, '');
+      const copy = document.createElement('button');
+      copy.textContent = '複製分享連結';
+      copy.onclick = async () => {
+        try { await navigator.clipboard.writeText(link); copy.textContent = '已複製 ✓'; }
+        catch { prompt('複製這個連結：', link); }
+        setTimeout(() => copy.textContent = '複製分享連結', 1500);
+      };
+      li.append(a, copy);
+      list.appendChild(li);
+    });
+    $('shelf').style.display = 'block';
+  } catch (e) { console.warn('書架載入失敗', e); }
+}
+function shareUrl(path) {
+  return location.origin + location.pathname + '?pdf=' + encodeURIComponent(path).replace(/%2F/g, '/');
+}
+if (!sharedPath) loadShelf();
 
 // ---------- 把每一頁轉成圖片 ----------
 async function renderPages(pdf) {
@@ -323,6 +398,7 @@ $('fsBtn').onclick = () => {
 // ---------- 畫面切換 ----------
 function showView(v) {
   $('drop').style.display = v === 'drop' ? 'block' : 'none';
+  $('home').style.display = v === 'drop' ? 'flex' : 'none';
   $('progress').style.display = v === 'progress' ? 'block' : 'none';
   $('stage').style.display = v === 'stage' ? 'flex' : 'none';
   $('controls').style.display = v === 'stage' ? 'flex' : 'none';
