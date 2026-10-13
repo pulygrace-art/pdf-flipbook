@@ -61,6 +61,19 @@
   #shelfList a { flex: 1; color: var(--fg); text-decoration: none; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
   #shelfList a:hover { color: var(--accent); }
   #shelfList button { font-size: 13px; padding: 5px 10px; }
+  /* 全螢幕：隱藏標題列，控制列浮在下方，滑鼠不動 2.5 秒後自動隱藏 */
+  body.fs header { display: none; }
+  body.fs main { padding: 8px; }
+  body.fs footer {
+    position: fixed; left: 50%; bottom: 16px; transform: translateX(-50%);
+    background: rgba(30,26,22,.85); border: 1px solid var(--border); border-radius: 12px;
+    backdrop-filter: blur(6px); z-index: 10; transition: opacity .3s;
+  }
+  body.fs.idle footer { opacity: 0; pointer-events: none; }
+  body.fs.idle { cursor: none; }
+  #fsExit { display: none; }
+  body.fs #fsExit { display: inline-block; }
+
   /* 分享模式：讀者只看書，不顯示上傳功能 */
   body.shared #changeBtn { display: none !important; }
 
@@ -102,7 +115,7 @@
   <label class="btn" id="changeBtn" style="display:none">開啟其他 PDF
     <input type="file" accept="application/pdf" hidden id="fileInput2">
   </label>
-  <button id="fsBtn" style="display:none" title="全螢幕">⛶</button>
+  <button id="fsBtn" style="display:none" title="全螢幕 (F)">⛶ 全螢幕</button>
 </header>
 
 <main>
@@ -137,6 +150,7 @@
   <span id="pageInfo">1 / 1</span>
   <button id="nextBtn" title="下一頁 (→)">下一頁 ▶</button>
   <button id="lastBtn" title="最後一頁">⏭</button>
+  <button id="fsExit" title="退出全螢幕 (Esc)">✕ 退出</button>
 </footer>
 
 <script>
@@ -390,10 +404,45 @@ document.addEventListener('keydown', e => {
   if (e.key === 'ArrowLeft') pageFlip.flipPrev();
   if (e.key === 'ArrowRight') pageFlip.flipNext();
 });
-$('fsBtn').onclick = () => {
-  if (document.fullscreenElement) document.exitFullscreen();
-  else document.documentElement.requestFullscreen?.();
-};
+// ---------- 全螢幕 ----------
+// 支援 Fullscreen API 的瀏覽器用真正的全螢幕；iPhone Safari 不支援，改用隱藏介面的沉浸模式
+function setFullscreen(on) {
+  const el = document.documentElement;
+  const req = el.requestFullscreen || el.webkitRequestFullscreen;
+  const exit = document.exitFullscreen || document.webkitExitFullscreen;
+  const isFs = document.fullscreenElement || document.webkitFullscreenElement;
+  if (on && req && !isFs) req.call(el).catch?.(() => applyFs(true));
+  else if (!on && isFs) exit.call(document);
+  applyFs(on);
+}
+function applyFs(on) {
+  if (document.body.classList.contains('fs') === on) return;
+  document.body.classList.toggle('fs', on);
+  $('fsBtn').textContent = on ? '✕ 退出全螢幕' : '⛶ 全螢幕';
+  pokeIdle();
+  window.dispatchEvent(new Event('resize'));   // 重新計算書本大小
+}
+const isFsActive = () => document.body.classList.contains('fs');
+$('fsBtn').onclick = () => setFullscreen(!isFsActive());
+$('fsExit').onclick = () => setFullscreen(false);
+// 使用者按 Esc 離開瀏覽器全螢幕時同步狀態
+['fullscreenchange', 'webkitfullscreenchange'].forEach(ev =>
+  document.addEventListener(ev, () => {
+    if (!(document.fullscreenElement || document.webkitFullscreenElement)) applyFs(false);
+  }));
+document.addEventListener('keydown', e => {
+  if (!pageFlip || e.target.tagName === 'INPUT') return;
+  if (e.key === 'f' || e.key === 'F') setFullscreen(!isFsActive());
+  if (e.key === 'Escape' && isFsActive()) setFullscreen(false);
+});
+// 全螢幕時滑鼠／觸控一段時間沒動就隱藏控制列
+let idleTimer;
+function pokeIdle() {
+  document.body.classList.remove('idle');
+  clearTimeout(idleTimer);
+  if (isFsActive()) idleTimer = setTimeout(() => document.body.classList.add('idle'), 2500);
+}
+['mousemove', 'touchstart', 'keydown'].forEach(ev => document.addEventListener(ev, pokeIdle, { passive: true }));
 
 // ---------- 畫面切換 ----------
 function showView(v) {
